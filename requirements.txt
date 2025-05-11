@@ -6,3 +6,4 @@ tensorflow-cpu~=2.19.0
 keras~=3.9.2
 mtcnn~=1.0.0
 keras-facenet~=0.3.2
+scipy~=1.11.3

@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+  <body>
+    <h2>Файлы в архиве:</h2>
+    <p>Фото-образец: {{ face_image }}</p>
+    <ul>
+      {% for file in files %}
+        <li>{{ file }}</li>
+      {% endfor %}
+    </ul>
+  </body>
+</html>

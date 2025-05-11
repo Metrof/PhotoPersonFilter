@@ -5,3 +5,4 @@ pillow~=10.4.0
 tensorflow~=2.19.0
 keras~=3.9.2
 mtcnn~=1.0.0
+keras-facenet~=0.3.2

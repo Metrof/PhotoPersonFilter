@@ -8,3 +8,5 @@ opencv-python-headless~=4.7
 keras-facenet~=0.3.2
 scipy~=1.11.3
 opencv-python~=4.11.0.86
+SQLAlchemy~=2.0
+psycopg2-binary~=2.9

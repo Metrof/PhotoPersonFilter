@@ -1,168 +1,127 @@
 import os
-import logging
-import threading
 import uuid
+import threading
 import tempfile
 import zipfile
 from io import BytesIO
 
 from flask import (
-    Flask, request, redirect, url_for, render_template, send_file
+    Flask, render_template, request,
+    redirect, url_for, send_file
 )
-from werkzeug.utils import secure_filename
-
+from flask_sqlalchemy import SQLAlchemy
 import cv2
 from cv2 import data
 import numpy as np
 from keras_facenet import FaceNet
 
-# SQLAlchemy
-from sqlalchemy import (
-    create_engine, Column, String, Integer, Text, JSON
-)
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+# ─── Конфиг и инициализация ───────────────────────────────────────────────────
+app = Flask(__name__)
+# DATABASE_URL берётся из ENV (например, postgresql+pg8000://…)
+app.config['SQLALCHEMY_DATABASE_URI']    = os.environ['DATABASE_URL']
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
 
-logging.info(f"Connecting to DB: {os.environ.get('DATABASE_URL')}")
-
-# ─── ЛОГИРОВАНИЕ ───────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-
-# ─── НАСТРОЙКА БАЗЫ ────────────────────────────────────────────────────────────
-DATABASE_URL = os.environ['DATABASE_URL']
-# Заменяем postgres:// на драйвер-специфичный URL
-if DATABASE_URL.startswith("postgres://"):
-    db_url = DATABASE_URL.replace("postgres://", "postgresql+pg8000://", 1)
-else:
-    db_url = DATABASE_URL
-
-engine     = create_engine(db_url, echo=False)
-Session    = sessionmaker(bind=engine)
-Base       = declarative_base()
-
-class Task(Base):
-    __tablename__ = 'tasks'
-    job_id    = Column(String, primary_key=True, index=True)
-    status    = Column(String, default='processing', nullable=False)
-    processed = Column(Integer, default=0)
-    total     = Column(Integer, default=0)
-    found     = Column(JSON,   default=[])
-    zip_path  = Column(String, nullable=False)
-    face_path = Column(String, nullable=False)
-    error     = Column(Text,   nullable=True)
-
-Base.metadata.create_all(bind=engine)
-
-# ─── FLASK & GLOBALS ──────────────────────────────────────────────────────────
-app     = Flask(__name__)
-cascade = cv2.CascadeClassifier(
+# Детектор и эмбеддер инициализируем один раз
+cascade  = cv2.CascadeClassifier(
     cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
 )
+embedder = FaceNet()
 
-# ─── ФОН – долгий код обработки ────────────────────────────────────────────────
-def long_task(job_id: str):
-    session = Session()
-    task    = session.query(Task).get(job_id)
+# ─── Модель задачи ────────────────────────────────────────────────────────────
+class Task(db.Model):
+    job_id    = db.Column(db.String,  primary_key=True)
+    status    = db.Column(db.String,  default='processing', nullable=False)
+    processed = db.Column(db.Integer, default=0)
+    total     = db.Column(db.Integer, default=0)
+    found     = db.Column(db.JSON,    default=[])
 
-    try:
-        logging.info(f"[{job_id}] Распаковка {task.zip_path}")
-        with zipfile.ZipFile(task.zip_path, 'r') as z:
-            work_dir = os.path.dirname(task.zip_path)
-            z.extractall(work_dir)
-        logging.info(f"[{job_id}] Архив распакован в {work_dir}")
+# Создаём таблицы (1 раз при старте)
+with app.app_context():
+    db.create_all()
 
-        # файлы для обработки
-        files = [
-            f for f in os.listdir(work_dir)
-            if f.lower().endswith(('.jpg','jpeg','png'))
-        ]
-        task.total = len(files)
-        session.commit()
-        logging.info(f"[{job_id}] Всего файлов: {task.total}")
+# ─── Фоновая обработка ────────────────────────────────────────────────────────
+def long_task(job_id, zip_path, face_path):
+    task     = Task.query.get(job_id)
+    work_dir = os.path.dirname(zip_path)
 
-        embedder   = FaceNet()
-        sample_img = cv2.imread(task.face_path)
-        faces      = cascade.detectMultiScale(
-            sample_img, scaleFactor=1.1, minNeighbors=4
-        )
-        if not len(faces):
-            raise RuntimeError("На фото-образце не найдено лицо")
-        x,y,w,h        = faces[0]
-        sample_face    = cv2.resize(sample_img[y:y+h, x:x+w], (160,160))
-        sample_emb     = embedder.embeddings([sample_face])[0]
-        logging.info(f"[{job_id}] Эталонный эмбеддинг получен")
+    # 1) Распаковать ZIP
+    with zipfile.ZipFile(zip_path, 'r') as z:
+        z.extractall(work_dir)
 
-        found = []
-        for idx, fname in enumerate(files, start=1):
-            task.processed = idx
-            session.commit()
-            logging.info(f"[{job_id}] {idx}/{task.total}: {fname}")
+    # 2) Собрать список изображений
+    files = [
+        f for f in os.listdir(work_dir)
+        if f.lower().endswith(('.jpg','jpeg','png'))
+    ]
+    task.total = len(files)
+    db.session.commit()
 
-            img = cv2.imread(os.path.join(work_dir, fname))
-            if img is None:
-                continue
-            faces = cascade.detectMultiScale(img, 1.1, 4)
-            if not len(faces):
-                continue
-
-            x,y,w,h   = faces[0]
-            face      = cv2.resize(img[y:y+h, x:x+w], (160,160))
-            emb       = embedder.embeddings([face])[0]
-            cos_sim   = np.dot(sample_emb, emb) / (
-                np.linalg.norm(sample_emb) * np.linalg.norm(emb)
-            )
-            if cos_sim >= 0.5:
-                found.append(fname)
-                logging.info(f"[{job_id}] Совпадение: {fname} (sim={cos_sim:.2f})")
-
-        task.found  = found
-        task.status = 'done'
-        session.commit()
-        logging.info(f"[{job_id}] Готово: найдено {len(found)}/{task.total}")
-
-    except Exception as e:
-        logging.exception(f"[{job_id}] Ошибка в задаче")
+    # 3) Эмбеддинг фото-образца
+    img = cv2.imread(face_path)
+    faces = cascade.detectMultiScale(img, 1.1, 4)
+    if not faces:
         task.status = 'error'
-        task.error  = str(e)
-        session.commit()
+        db.session.commit()
+        return
 
-    finally:
-        session.close()
+    x, y, w, h = faces[0]
+    sample_face = cv2.resize(img[y:y+h, x:x+w], (160,160))
+    sample_emb  = embedder.embeddings([sample_face])[0]
 
-# ─── РОУТЫ ────────────────────────────────────────────────────────────────────
+    # 4) Перебор, сравнение и сбор совпадений
+    found = []
+    for idx, fname in enumerate(files, start=1):
+        task.processed = idx
+        db.session.commit()
+
+        img = cv2.imread(os.path.join(work_dir, fname))
+        faces = cascade.detectMultiScale(img, 1.1, 4)
+        if not len(faces):
+            continue
+
+        x, y, w, h = faces[0]
+        face = cv2.resize(img[y:y+h, x:x+w], (160,160))
+        emb  = embedder.embeddings([face])[0]
+
+        cos_sim = np.dot(sample_emb, emb) / (
+            np.linalg.norm(sample_emb) * np.linalg.norm(emb)
+        )
+        if cos_sim >= 0.5:
+            found.append(fname)
+
+    # 5) Сохраняем результат
+    task.found  = found
+    task.status = 'done'
+    db.session.commit()
+
+# ─── Роуты ────────────────────────────────────────────────────────────────────
 @app.route('/', methods=['GET','POST'])
 def index():
     if request.method == 'POST':
         if 'zip_file' not in request.files or 'face_image' not in request.files:
             return "Нужно ZIP и фото.", 400
 
-        # сохраняем во временный каталог
+        # Сохраняем файлы во временную папку
         work_dir = tempfile.mkdtemp()
         zip_f    = request.files['zip_file']
         face_f   = request.files['face_image']
-        zip_path = os.path.join(work_dir, secure_filename(zip_f.filename))
-        face_path= os.path.join(work_dir, secure_filename(face_f.filename))
+        zip_path = os.path.join(work_dir, zip_f.filename)
+        face_path= os.path.join(work_dir, face_f.filename)
         zip_f.save(zip_path)
         face_f.save(face_path)
 
-        # создаём запись в БД
+        # Регистрируем задачу в БД и запускаем фон
         job_id = str(uuid.uuid4())
-        session= Session()
-        task   = Task(
-            job_id=job_id,
-            zip_path=zip_path,
-            face_path=face_path
-        )
-        session.add(task)
-        session.commit()
-        session.close()
+        task   = Task(job_id=job_id)
+        db.session.add(task)
+        db.session.commit()
 
-        logging.info(f"[{job_id}] Получены файлы, запускаем фон")
-        threading.Thread(target=long_task, args=(job_id,), daemon=True).start()
+        threading.Thread(
+            target=long_task,
+            args=(job_id, zip_path, face_path),
+            daemon=True
+        ).start()
 
         return redirect(url_for('status', job_id=job_id))
 
@@ -171,12 +130,9 @@ def index():
 
 @app.route('/status/<job_id>')
 def status(job_id):
-    session = Session()
-    task    = session.query(Task).get(job_id)
-    session.close()
+    task = Task.query.get(job_id)
     if not task:
         return "Задача не найдена", 404
-
     if task.status == 'processing':
         return render_template(
             'status.html',
@@ -186,21 +142,20 @@ def status(job_id):
         )
     if task.status == 'done':
         return redirect(url_for('download', job_id=job_id))
-    return f"Ошибка: {task.error}", 500
+    return "Ошибка при обработке", 500
 
 
 @app.route('/download/<job_id>')
 def download(job_id):
-    session = Session()
-    task    = session.query(Task).get(job_id)
-    session.close()
+    task = Task.query.get(job_id)
     if not task or task.status != 'done':
         return "Результат не готов", 404
 
     buf = BytesIO()
     with zipfile.ZipFile(buf, 'w') as z:
+        work_dir = tempfile.gettempdir()  # либо os.path.dirname(saved zip)
         for fname in task.found:
-            full = os.path.join(os.path.dirname(task.zip_path), fname)
+            full = os.path.join(work_dir, fname)
             z.write(full, arcname=fname)
     buf.seek(0)
 
@@ -211,8 +166,7 @@ def download(job_id):
         mimetype='application/zip'
     )
 
-# ─── ЗАПУСК ────────────────────────────────────────────────────────────────────
+# ─── Старт ────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    Base.metadata.create_all(bind=engine)
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

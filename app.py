@@ -8,6 +8,9 @@ import cv2
 from cv2 import data
 from keras_facenet import FaceNet
 
+import time, logging
+logging.basicConfig(level=logging.INFO)
+
 # Инициализация
 embedder = FaceNet()  # автоматически загрузит и закеширует веса
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -72,6 +75,8 @@ def index():
             matches = []
             for root, _, files in os.walk(extract_dir):
                 for fname in files:
+                    start = time.time()
+                    logging.info("Processing %s", fname)
                     fpath = os.path.join(root, fname)
                     face = extract_face(fpath)
                     if face is None:
@@ -79,6 +84,8 @@ def index():
                     emb = embedder.embeddings([face])[0]
                     if cosine_similarity(sample_emb, emb) >= THRESHOLD:
                         matches.append(fpath)
+
+            logging.info("done %s in %.2f s", fname, time.time() - start)
 
             # Формируем zip-ответ
             buf = io.BytesIO()

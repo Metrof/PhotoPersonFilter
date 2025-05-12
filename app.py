@@ -32,7 +32,13 @@ logging.basicConfig(
 
 # ─── НАСТРОЙКА БАЗЫ ────────────────────────────────────────────────────────────
 DATABASE_URL = os.environ['DATABASE_URL']
-engine     = create_engine(DATABASE_URL, echo=False)
+# Заменяем postgres:// на драйвер-специфичный URL
+if DATABASE_URL.startswith("postgres://"):
+    db_url = DATABASE_URL.replace("postgres://", "postgresql+pg8000://", 1)
+else:
+    db_url = DATABASE_URL
+
+engine     = create_engine(db_url, echo=False)
 Session    = sessionmaker(bind=engine)
 Base       = declarative_base()
 

@@ -6,12 +6,12 @@ from keras_facenet import FaceNet
 
 app = Flask(__name__)
 
-# ─── Инициализация модели и каскада (скачаются только веса при первом запуске) ───
-embedder     = FaceNet()  # автоматически скачивает и кеширует веса
-face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-)
-THRESHOLD = 0.5
+# # ─── Инициализация модели и каскада (скачаются только веса при первом запуске) ───
+# embedder     = FaceNet()  # автоматически скачивает и кеширует веса
+# face_cascade = cv2.CascadeClassifier(
+#     cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+# )
+# THRESHOLD = 0.5
 
 @app.route('/', methods=['GET', 'POST'])
 def index():

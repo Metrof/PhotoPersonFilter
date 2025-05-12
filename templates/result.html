@@ -1,16 +1,56 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <title>Title</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Результат</title>
+    <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+    }
+    body {
+      background: url('/static/background.jpg') no-repeat center center fixed;
+      background-size: cover;
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .card {
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+    }
+    .card h1 {
+      font-size: 40px;
+      color: #007BFF;
+      font-weight: bold;
+    }
+    .card button {
+      margin-top: 20px;
+      padding: 12px 20px;
+      font-size: 20px;
+      font-weight: bold;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      background-color: #007BFF;
+      color: #fff;
+      width: 100%;
+    }
+  </style>
 </head>
-  <body>
-    <h2>Файлы в архиве:</h2>
-    <p>Фото-образец: {{ face_image }}</p>
-    <ul>
-      {% for file in files %}
-        <li>{{ file }}</li>
-      {% endfor %}
-    </ul>
-  </body>
+<body>
+  <form class="card" method="POST" enctype="multipart/form-data">
+    <h1>Результат</h1>
+    <p>В загруженном архиве найдено <strong>{{ count }}</strong> файлов.</p>
+    <a href="{{ url_for('index') }}">← Вернуться назад</a>
+  </form>
+</body>
 </html>

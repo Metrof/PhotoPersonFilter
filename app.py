@@ -23,6 +23,8 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
+logging.info(f"Connecting to DB: {os.environ.get('DATABASE_URL')}")
+
 # ─── ЛОГИРОВАНИЕ ───────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -211,5 +213,6 @@ def download(job_id):
 
 # ─── ЗАПУСК ────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    Base.metadata.create_all(bind=engine)
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

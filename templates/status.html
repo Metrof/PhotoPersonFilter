@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Статус обработки</title>
+  <!-- Автообновление страницы каждые 5 секунд, пока идёт обработка -->
+  <meta http-equiv="refresh" content="5">
+  <style>
+    body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; }
+    .progress-container { width: 80%; max-width: 400px; background: #eee; border-radius: 8px; overflow: hidden; margin: 20px 0; }
+    .progress-bar { height: 20px; background-color: #007BFF; width: 0%; transition: width 0.3s; }
+    button { padding: 12px 20px; font-size: 16px; border: none; border-radius: 4px; cursor: pointer; background-color: #28a745; color: #fff; }
+  </style>
+</head>
+<body>
+  {% if status == 'processing' %}
+    <h2>Обработка фотографий...</h2>
+    <div class="progress-container">
+      <div class="progress-bar" style="width: {{ (processed / total * 100) if total else 0 }}%;"></div>
+    </div>
+    <p>{{ processed }} / {{ total }} фотографий проверено</p>
+  {% elif status == 'error' %}
+    <h2>Ошибка обработки</h2>
+    <p>{{ message }}</p>
+  {% elif status == 'done' %}
+    <h2>Обработка завершена!</h2>
+    <a href="{{ url_for('download', job_id=job_id) }}"><button>Скачать найденные фото</button></a>
+  {% endif %}
+</body>
+</html>

@@ -9,22 +9,22 @@ from keras_facenet import FaceNet
 import cv2
 from cv2 import data
 
-# --- Инициализация FaceNet и каскада Хаара --------------------------------
-embedder = FaceNet()  # автоматически скачает и закеширует веса при первом запуске
+# --- Инициализация моделей ------------------------------------------------
+embedder = FaceNet()  # Автоматически скачивает и кеширует веса
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 THRESHOLD = 0.5
 
-# --- Папки для загрузок и результатов --------------------------------------
+# --- Настройка Flask и папок ----------------------------------------------
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
 RESULT_FOLDER = 'results'
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 
-# --- Хранилище статусов задач ---------------------------------------------
-tasks = {}
+tasks = {}  # Хранилище статуса задач
 
-# --- Вспомогательные функции ----------------------------------------------
+# --- Вспомогательные функции ------------------------------------------------
 def extract_face(image_path, required_size=(160, 160)):
     img_bgr = cv2.imread(image_path)
     if img_bgr is None:
@@ -47,42 +47,49 @@ def cosine_similarity(a, b):
 
 
 def process_task(job_id, zip_path, face_path):
-    # Обновляем статус
-    tasks[job_id] = {'status': 'processing'}
+    # Инициализируем статус задачи
+    tasks[job_id] = {'status': 'processing', 'total': 0, 'processed': 0}
     try:
-        # Распаковка архива
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Распаковка архива
             extract_dir = os.path.join(tmpdir, 'photos')
             os.makedirs(extract_dir, exist_ok=True)
             with zipfile.ZipFile(zip_path) as zf:
                 zf.extractall(extract_dir)
 
-            # Обработка образца
+            # Подсчет общего количества файлов
+            total_files = sum(len(files) for _, _, files in os.walk(extract_dir))
+            tasks[job_id]['total'] = total_files
+
+            # Обработка фото-образца
             sample_face = extract_face(face_path)
             if sample_face is None:
                 raise ValueError('Лицо на образце не найдено')
             sample_emb = embedder.embeddings([sample_face])[0]
 
             matches = []
+            # Перебор и сравнение
             for root, _, files in os.walk(extract_dir):
                 for fname in files:
                     fpath = os.path.join(root, fname)
                     face = extract_face(fpath)
+                    # Обновляем счётчик обработанных
+                    tasks[job_id]['processed'] += 1
                     if face is None:
                         continue
                     emb = embedder.embeddings([face])[0]
                     if cosine_similarity(sample_emb, emb) >= THRESHOLD:
                         matches.append(fpath)
 
-        # Упаковка найденных фото
+        # Упаковка найденных в zip
         result_path = os.path.join(RESULT_FOLDER, f"{job_id}.zip")
         with zipfile.ZipFile(result_path, 'w', zipfile.ZIP_DEFLATED) as zf_out:
             for m in matches:
                 zf_out.write(m, arcname=os.path.basename(m))
 
-        tasks[job_id] = {'status': 'done', 'result_path': result_path}
+        tasks[job_id].update({'status': 'done', 'result_path': result_path})
     except Exception as e:
-        tasks[job_id] = {'status': 'error', 'message': str(e)}
+        tasks[job_id].update({'status': 'error', 'message': str(e)})
 
 # --- Маршруты --------------------------------------------------------------
 @app.route('/', methods=['GET', 'POST'])
@@ -93,7 +100,6 @@ def index():
         if not zip_file or not face_image:
             return 'Оба файла (zip и фото) должны быть загружены.', 400
 
-        # Генерация идентификатора задачи
         job_id = str(uuid.uuid4())
         zip_path = os.path.join(UPLOAD_FOLDER, f"{job_id}_{secure_filename(zip_file.filename)}")
         face_path = os.path.join(UPLOAD_FOLDER, f"{job_id}_{secure_filename(face_image.filename)}")
@@ -101,10 +107,9 @@ def index():
         face_image.save(face_path)
 
         # Запуск фонового потока
-        thread = threading.Thread(target=process_task, args=(job_id, zip_path, face_path))
+        thread = threading.Thread(target=process_task, args=(job_id, zip_path, face_path), daemon=True)
         thread.start()
 
-        # Перенаправление на страницу статуса
         return redirect(url_for('status', job_id=job_id))
     return render_template('index.html')
 
@@ -113,12 +118,12 @@ def status(job_id):
     task = tasks.get(job_id)
     if not task:
         return 'Неверный идентификатор задачи.', 404
-    if task['status'] == 'processing':
-        return f"Задача {job_id} обрабатывается. Обновите страницу через несколько секунд."
-    if task['status'] == 'error':
-        return f"Ошибка обработки: {task['message']}"
-    # статус done
-    return redirect(url_for('download', job_id=job_id))
+    return render_template('status.html',
+                           job_id=job_id,
+                           status=task['status'],
+                           total=task['total'],
+                           processed=task['processed'],
+                           message=task.get('message', ''))
 
 @app.route('/download/<job_id>')
 def download(job_id):

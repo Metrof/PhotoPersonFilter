@@ -3,3 +3,4 @@ keras-facenet~=0.3.2
 opencv-contrib-python~=4.11.0.86
 opencv-python~=4.11.0.86
 scipy~=1.11.3
+tensorflow-cpu~=2.19.0

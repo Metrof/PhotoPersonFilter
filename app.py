@@ -1,8 +1,8 @@
 from flask import Flask, request, render_template
 import zipfile, io
-import cv2
-from cv2 import data
-from keras_facenet import FaceNet
+# import cv2
+# from cv2 import data
+# from keras_facenet import FaceNet
 
 app = Flask(__name__)
 

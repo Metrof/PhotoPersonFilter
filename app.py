@@ -10,6 +10,7 @@ from flask import Flask, request, redirect, url_for, render_template, send_file
 from werkzeug.utils import secure_filename
 from keras_facenet import FaceNet
 import cv2
+from cv2 import data
 import numpy as np
 
 # ─── Настройка логирования ─────────────────────────────────────────────────────

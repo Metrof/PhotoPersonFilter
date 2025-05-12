@@ -1,13 +1,21 @@
 import os
 import zipfile
-import tempfile
 import threading
 import uuid
 from flask import Flask, render_template, request, send_file, redirect, url_for
 from werkzeug.utils import secure_filename
 from keras_facenet import FaceNet
 import cv2
+import numpy as np
 from cv2 import data
+
+import logging
+# Настраиваем логгер
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 # --- Инициализация моделей ------------------------------------------------
 embedder = FaceNet()  # Автоматически скачивает и кеширует веса
@@ -48,48 +56,65 @@ def cosine_similarity(a, b):
 
 def process_task(job_id, zip_path, face_path):
     # Инициализируем статус задачи
-    tasks[job_id] = {'status': 'processing', 'total': 0, 'processed': 0}
+    logging.info(f"[{job_id}] Задача запущена: распаковка {zip_path}")
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Распаковка архива
-            extract_dir = os.path.join(tmpdir, 'photos')
-            os.makedirs(extract_dir, exist_ok=True)
-            with zipfile.ZipFile(zip_path) as zf:
-                zf.extractall(extract_dir)
+        # 1) Распаковать
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(os.path.dirname(zip_path))
+        logging.info(f"[{job_id}] Архив распакован")
 
-            # Подсчет общего количества файлов
-            total_files = sum(len(files) for _, _, files in os.walk(extract_dir))
-            tasks[job_id]['total'] = total_files
+        # 2) Подготовить список файлов
+        img_dir = os.path.dirname(zip_path)
+        files = [f for f in os.listdir(img_dir) if f.lower().endswith(('.jpg', '.png'))]
+        total = len(files)
+        tasks[job_id]['total'] = total
+        logging.info(f"[{job_id}] Найдено файлов для обработки: {total}")
 
-            # Обработка фото-образца
-            sample_face = extract_face(face_path)
-            if sample_face is None:
-                raise ValueError('Лицо на образце не найдено')
-            sample_emb = embedder.embeddings([sample_face])[0]
+        # 3) Инициализировать детектор и эмбеддер
+        detector = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
-            matches = []
-            # Перебор и сравнение
-            for root, _, files in os.walk(extract_dir):
-                for fname in files:
-                    fpath = os.path.join(root, fname)
-                    face = extract_face(fpath)
-                    # Обновляем счётчик обработанных
-                    tasks[job_id]['processed'] += 1
-                    if face is None:
-                        continue
-                    emb = embedder.embeddings([face])[0]
-                    if cosine_similarity(sample_emb, emb) >= THRESHOLD:
-                        matches.append(fpath)
+        # 4) Извлечь эмбеддинг образца
+        sample_img = cv2.imread(face_path)
+        faces = detector.detectMultiScale(sample_img, scaleFactor=1.1, minNeighbors=4)
+        if len(faces) == 0:
+            raise RuntimeError("На фото-образце не найдено лицо")
+        x, y, w, h = faces[0]
+        sample_face = cv2.resize(sample_img[y:y + h, x:x + w], (160, 160))
+        sample_emb = embedder.embeddings([sample_face])[0]
+        logging.info(f"[{job_id}] Эталонный эмбеддинг получен")
 
-        # Упаковка найденных в zip
-        result_path = os.path.join(RESULT_FOLDER, f"{job_id}.zip")
-        with zipfile.ZipFile(result_path, 'w', zipfile.ZIP_DEFLATED) as zf_out:
-            for m in matches:
-                zf_out.write(m, arcname=os.path.basename(m))
+        # 5) Перебор и сравнение
+        found = []
+        for idx, fname in enumerate(files, start=1):
+            tasks[job_id]['processed'] = idx
+            logging.info(f"[{job_id}] Обработка {idx}/{total}: {fname}")
 
-        tasks[job_id].update({'status': 'done', 'result_path': result_path})
+            img = cv2.imread(os.path.join(img_dir, fname))
+            if img is None:
+                logging.warning(f"[{job_id}] Не удалось прочитать {fname}, пропускаем")
+                continue
+            faces = detector.detectMultiScale(img, scaleFactor=1.1, minNeighbors=4)
+            if not len(faces):
+                continue
+
+            x, y, w, h = faces[0]
+            face = cv2.resize(img[y:y + h, x:x + w], (160, 160))
+            emb = embedder.embeddings([face])[0]
+            # косинусное сходство
+            cos_sim = np.dot(sample_emb, emb) / (np.linalg.norm(sample_emb) * np.linalg.norm(emb))
+            if cos_sim >= 0.5:
+                found.append(fname)
+                logging.info(f"[{job_id}] Совпадение: {fname} (sim={cos_sim:.2f})")
+
+        # 6) Упаковать найденное
+        tasks[job_id]['found'] = found
+        tasks[job_id]['status'] = 'done'
+        logging.info(f"[{job_id}] Задача завершена. Найдено {len(found)}/{total}")
+
     except Exception as e:
-        tasks[job_id].update({'status': 'error', 'message': str(e)})
+        logging.exception(f"[{job_id}] Ошибка в задаче:")
+        tasks[job_id]['status'] = 'error'
+        tasks[job_id]['error'] = str(e)
 
 # --- Маршруты --------------------------------------------------------------
 @app.route('/', methods=['GET', 'POST'])
@@ -98,18 +123,19 @@ def index():
         zip_file = request.files.get('zip_file')
         face_image = request.files.get('face_image')
         if not zip_file or not face_image:
+            logging.error("POST без необходимых файлов")
             return 'Оба файла (zip и фото) должны быть загружены.', 400
 
         job_id = str(uuid.uuid4())
+        tasks[job_id] = {'status': 'processing', 'processed': 0, 'total': 0}
         zip_path = os.path.join(UPLOAD_FOLDER, f"{job_id}_{secure_filename(zip_file.filename)}")
         face_path = os.path.join(UPLOAD_FOLDER, f"{job_id}_{secure_filename(face_image.filename)}")
         zip_file.save(zip_path)
         face_image.save(face_path)
 
         # Запуск фонового потока
-        thread = threading.Thread(target=process_task, args=(job_id, zip_path, face_path), daemon=True)
-        thread.start()
-
+        logging.info(f"[{job_id}] Получены файлы, запускаем фоновый поток")
+        threading.Thread(target=process_task, args=(job_id, zip_path, face_path), daemon=True).start()
         return redirect(url_for('status', job_id=job_id))
     return render_template('index.html')
 

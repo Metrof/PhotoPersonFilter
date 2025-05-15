@@ -47,10 +47,19 @@
   </style>
 </head>
 <body>
-  <form class="card" method="POST" enctype="multipart/form-data">
+  <div class="card">
     <h1>Результат</h1>
-    <p>В загруженном архиве найдено <strong>{{ count }}</strong> файлов.</p>
-    <a href="{{ url_for('index') }}">← Вернуться назад</a>
-  </form>
+
+    {% if error %}
+      <p style="color:red">{{ error }}</p>
+    {% else %}
+      <p>Найдено совпадений: <strong>{{ count }}</strong></p>
+      {% if download_url %}
+        <p><a href="{{ download_url }}">Скачать найденные фото</a></p>
+      {% endif %}
+    {% endif %}
+
+    <p><a href="{{ url_for('index') }}">← Вернуться назад</a></p>
+  </div>
 </body>
 </html>

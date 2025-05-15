@@ -1,31 +1,65 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Статус обработки</title>
-  <!-- Автообновление страницы каждые 5 секунд, пока идёт обработка -->
-  <meta http-equiv="refresh" content="5">
-  <style>
-    body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; }
-    .progress-container { width: 80%; max-width: 400px; background: #eee; border-radius: 8px; overflow: hidden; margin: 20px 0; }
-    .progress-bar { height: 20px; background-color: #007BFF; width: 0%; transition: width 0.3s; }
-    button { padding: 12px 20px; font-size: 16px; border: none; border-radius: 4px; cursor: pointer; background-color: #28a745; color: #fff; }
+  <meta charset="utf-8">
+  <title>Идёт обработка…</title>
+  <!-- авто-перезагрузка страницы каждые 2 с -->
+  <meta http-equiv="refresh" content="1">
+<style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+    }
+    body {
+      background: url('/static/background.jpg') no-repeat center center fixed;
+      background-size: cover;
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 1.2rem; /* Размер основного шрифта */
+    }
+    .card {
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+    }
+    .card h1 {
+      font-size: 40px;
+      color: #007BFF;
+      font-weight: bold;
+    }
+    .bar-container {
+      width: 100%; background: #f3f3f3;
+      border: 3px solid black;
+      border-radius: 10px;
+      margin: 40px auto;
+    }
+    .bar {
+      border-radius: 7px;
+      height: 30px; background: #007BFF;
+      width: {{ (processed/total*100) if total else 0 }}%;
+    }
   </style>
 </head>
 <body>
-  {% if status == 'processing' %}
-    <h2>Обработка фотографий...</h2>
-    <div class="progress-container">
-      <div class="progress-bar" style="width: {{ (processed / total * 100) if total else 0 }}%;"></div>
+<div class="card">
+    <h1 style="text-align:center">Обработка…</h1>
+    <div class="bar-container">
+      <div class="bar"></div>
     </div>
-    <p>{{ processed }} / {{ total }} фотографий проверено</p>
-  {% elif status == 'error' %}
-    <h2>Ошибка обработки</h2>
-    <p>{{ message }}</p>
-  {% elif status == 'done' %}
-    <h2>Обработка завершена!</h2>
-    <a href="{{ url_for('download', job_id=job_id) }}"><button>Скачать найденные фото</button></a>
-  {% endif %}
+  <p class="stats"><b>{{ processed }}/{{ total }} фото проверено</b></p>
+  </div>
+    {% if done %}
+      <script>
+        // здесь task_id уже доступен и done=True
+        window.location.href = "{{ url_for('download', fname='found_' + task_id + '.zip') }}";
+      </script>
+    {% endif %}
 </body>
 </html>
